@@ -1,0 +1,205 @@
+--Module that hanldes the movement of the player
+--uses velocity and acceleration to move the player
+--and holds states of sprinting, crouching, jumping, walking
+--and is relative to the camera direction
+
+local Movement = {}
+
+local initialized = false
+
+function Movement.Init()
+    if initialized then return end
+    initialized = true
+
+    local Modules, Classes, Shared, Interfaces = require(game.Players.LocalPlayer.PlayerScripts.Client.Utils.Load)()
+
+    --Services
+    local RunService = game:GetService("RunService")
+
+    --Classes
+    local State = Shared.Classes.State
+    local Spring = Shared.Classes.Spring
+
+    --Variables
+    local player = game.Players.LocalPlayer
+    local character = player.Character or player.CharacterAdded:Wait()
+    local humanoid = character:WaitForChild("Humanoid")
+    local rootPart = character:WaitForChild("HumanoidRootPart")
+
+    --Movement Variables
+    local MovementState = State.new({
+        Sprinting = false;
+        Crouching = false;
+        Jumping = false;
+        Walking = false;
+    })
+
+    local MovementTransforms = {
+        Velocity = Vector3.new();
+        Acceleration = Vector3.new();
+    }
+
+    local MovementInputs = {
+        Forward = false,
+        Backward = false,
+        Left = false,
+        Right = false,
+    }
+
+    local MovementSettings = {
+        WalkSpeed = 10;
+        SprintSpeed = 22;
+        CrouchSpeed = 6;
+        JumpPower = 50;
+        Acceleration = 100;
+        Deceleration = 100;
+        MaxVelocity = 100;
+    }
+
+    --binds the movement action to the input module
+    local Input = Modules.Input
+    Input.Init()
+    Input:BindAction({
+        Keybind = "Movement",
+        Function = function(input, gameProcessed)
+            if not gameProcessed then
+                if input.KeyCode == Enum.KeyCode.W then
+                    MovementInputs.Forward = input.UserInputState == Enum.UserInputState.Begin
+                elseif input.KeyCode == Enum.KeyCode.S then
+                    MovementInputs.Backward = input.UserInputState == Enum.UserInputState.Begin
+                elseif input.KeyCode == Enum.KeyCode.A then
+                    MovementInputs.Left = input.UserInputState == Enum.UserInputState.Begin
+                elseif input.KeyCode == Enum.KeyCode.D then
+                    MovementInputs.Right = input.UserInputState == Enum.UserInputState.Begin
+                end
+            end
+        end
+    })
+
+
+    --binds the sprint action to the input module
+    Input:BindAction({
+        Keybind = "Sprint",
+        Function = function(input, gameProcessed)
+            if not gameProcessed then
+                if input.UserInputState == Enum.UserInputState.Begin then
+                    MovementState:SetState({Sprinting = true})
+                elseif input.UserInputState == Enum.UserInputState.End then
+                    MovementState:SetState({Sprinting = false})
+                end
+            end
+        end
+    })
+
+    --binds the crouch action to the input module
+    Input:BindAction({
+        Keybind = "Crouch",
+        Function = function(input, gameProcessed)
+            if not gameProcessed then
+                if input.UserInputState == Enum.UserInputState.Begin then
+                    MovementState:SetState({Crouching = true})
+                elseif input.UserInputState == Enum.UserInputState.End then
+                    MovementState:SetState({Crouching = false})
+                end
+            end
+        end
+    })
+
+    --binds the jump action to the input module
+    Input:BindAction({
+        Keybind = "Jump",
+        Function = function(input, gameProcessed)
+            if not gameProcessed then
+                if input.UserInputState == Enum.UserInputState.Begin then
+                    MovementState:SetState({Jumping = true})
+                    --make player humanoid jump
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                elseif input.UserInputState == Enum.UserInputState.End then
+                    MovementState:SetState({Jumping = false})
+                end
+            end
+        end
+    })
+
+    function Movement.GetVelocity()
+        return MovementTransforms.Velocity
+    end
+
+    --Movement.Update function
+    --updates the movement of the player
+    function Movement.Update(delta)
+        --get the camera direction and flatten it to the xz plane
+        local cameraDirection = workspace.CurrentCamera.CFrame.LookVector
+        cameraDirection = Vector3.new(cameraDirection.X, 0, cameraDirection.Z).Unit
+
+        --get the movement direction
+        local movementDirection = Vector3.new()
+        if MovementInputs.Forward then
+            movementDirection = movementDirection + cameraDirection
+        end
+        if MovementInputs.Backward then
+            movementDirection = movementDirection - cameraDirection
+        end
+        if MovementInputs.Left then
+            movementDirection = movementDirection - cameraDirection:Cross(Vector3.new(0,1,0))
+        end
+        if MovementInputs.Right then
+            movementDirection = movementDirection + cameraDirection:Cross(Vector3.new(0,1,0))
+        end
+
+        --get the movement speed
+        local movementSpeed = MovementSettings.WalkSpeed
+        if MovementState:GetState().Sprinting then
+            movementSpeed = MovementSettings.SprintSpeed
+        elseif MovementState:GetState().Crouching then
+            movementSpeed = MovementSettings.CrouchSpeed
+        end
+
+        --get the movement acceleration
+        local movementAcceleration = movementDirection * MovementSettings.Acceleration
+
+        --as the player gets within a certain distance of their max speed, slow their acceleration down
+        --but if they are moving in the opposite direction, don't slow them down
+        --[[if MovementTransforms.Velocity.Magnitude > movementSpeed - 1 and movementDirection.Magnitude > 0 then
+            movementAcceleration = movementAcceleration * (1 - (MovementTransforms.Velocity.Magnitude - movementSpeed) / 1)
+        end]]
+
+
+        --if the player is moving faster than their max speed, slow them down
+        if MovementTransforms.Velocity.Magnitude > movementSpeed then
+            movementAcceleration = -MovementTransforms.Velocity.Unit * MovementSettings.Deceleration
+        end
+
+        if movementDirection.Magnitude == 0 and MovementTransforms.Velocity.Magnitude > 1 then
+            movementAcceleration = -MovementTransforms.Velocity.Unit * MovementSettings.Deceleration
+        end
+
+        --update the movement velocity
+
+        --if velocity is close to zero and the player is not moving, set velocity to 0
+        
+        --if player is grounded, update velocity, otherwise, don't update velocity
+        if humanoid.FloorMaterial ~= Enum.Material.Air then
+            MovementTransforms.Velocity = MovementTransforms.Velocity + movementAcceleration * delta
+        end
+        if MovementTransforms.Velocity.Magnitude < 1 and movementDirection.Magnitude == 0 then
+            MovementTransforms.Velocity = Vector3.new()
+        end
+
+        --update the players humanoid move direction and walk speed to fit the movement velocity
+        
+        --make sure the movement velocity isnt 0,0,0 because the unit will be nan
+        if MovementTransforms.Velocity.Magnitude > 0 then
+            humanoid:Move(MovementTransforms.Velocity.Unit, false)
+        end
+        humanoid.WalkSpeed = MovementTransforms.Velocity.Magnitude or 0
+    end
+
+
+    --bind the update function to the run service
+    RunService.Heartbeat:Connect(function(dt)
+        Movement.Update(dt)
+    end)
+end
+
+return Movement
